@@ -1,73 +1,87 @@
 import '../address.dart';
 import '../regions.dart';
+import 'common.dart';
 import 'dtek_bridge.dart';
 import 'yasno.dart';
 
-/// Пошук адреси: населений пункт → вулиця → будинок → черга.
-abstract class AddressSource {
-  bool get needsCity;
-  Future<List<AddressOption>> cities(String query);
-  Future<List<AddressOption>> streets(AddressOption? city, String query);
-  Future<List<AddressOption>> houses(
-      AddressOption? city, AddressOption street, String query);
-  Future<String?> queue(
-      AddressOption? city, AddressOption street, AddressOption house);
+/// Один крок пошуку адреси.
+class AddressLevel {
+  final String title;
+  final String placeholder;
 
-  /// Пошук іде локально (DTEK віддає весь список одразу) — без затримки на введення.
-  bool get isLocal;
+  /// Скільки символів треба ввести, перш ніж шукати (0 — показати все одразу).
+  final int minQuery;
 
-  static AddressSource of(Oblast o) => switch (o.kind) {
-        SourceKind.yasno => YasnoAddressSource(o),
-        SourceKind.dtek => DtekAddressSource(o),
-        SourceKind.web =>
-          throw UnsupportedError('пошук за адресою недоступний'),
-      };
+  /// Будинки — плиткою.
+  final bool grid;
+
+  /// Пошуку немає: введений текст і є значенням (Волинь).
+  final bool freeText;
+
+  const AddressLevel(
+    this.title,
+    this.placeholder, {
+    this.minQuery = 0,
+    this.grid = false,
+    this.freeText = false,
+  });
 }
 
-class YasnoAddressSource implements AddressSource {
-  YasnoAddressSource(this.oblast);
-  final Oblast oblast;
-  final _api = YasnoApi();
+const cityLevel = AddressLevel('Населений пункт', 'Назва міста чи села');
+const streetLevel = AddressLevel('Вулиця', 'Назва вулиці');
+const houseLevel = AddressLevel('Будинок', 'Номер будинку', grid: true);
 
-  @override
-  bool get needsCity => oblast.hasCities;
-  @override
+/// Пошук адреси: ланцюжок рівнів, на останньому — черга будинку.
+abstract class AddressSource {
+  List<AddressLevel> get levels;
+
+  /// Варіанти для рівня [level] з урахуванням уже обраних [chosen].
+  Future<List<AddressOption>> options(
+      int level, List<AddressOption> chosen, String query);
+
+  /// Черга для повністю обраної адреси.
+  Future<String?> queue(List<AddressOption> chosen);
+
+  /// Пошук локальний (весь список уже є) — без затримки на введення.
   bool get isLocal => false;
 
-  @override
-  Future<List<AddressOption>> cities(String q) async {
-    if (q.trim().length < 2) return const [];
-    return sortByRelevance(await _api.cities(oblast, q.trim()), q);
-  }
+  /// Підказка під час першого завантаження.
+  String? get loadingHint => null;
 
-  @override
-  Future<List<AddressOption>> streets(AddressOption? city, String q) =>
-      q.trim().length < 2 && !needsCity
-          ? Future.value(const [])
-          : _api.streets(oblast, city, q.trim());
+  /// Черга, записана у варіанті будинку (більшість джерел так і віддають).
+  static String? queueOf(AddressOption house) =>
+      house.extra['queue'] as String?;
+}
 
-  @override
-  Future<List<AddressOption>> houses(
-          AddressOption? city, AddressOption street, String q) =>
-      _api.houses(oblast, city, street, q.trim());
+/// Будинки «2, 4, 10, 10А» — за числом, потім за рештою.
+int compareHouses(String a, String b) {
+  int n(String s) =>
+      int.tryParse(RegExp(r'\d+').stringMatch(s) ?? '') ?? 1 << 30;
+  final c = n(a).compareTo(n(b));
+  return c != 0 ? c : a.compareTo(b);
+}
 
-  @override
-  Future<String?> queue(
-          AddressOption? city, AddressOption street, AddressOption house) =>
-      _api.queue(oblast, city, street, house);
+/// Будинки, номер яких починається з введеного.
+List<AddressOption> filterHouses(Iterable<AddressOption> list, String q) {
+  final query = q.trim().toLowerCase();
+  return list
+      .where((h) => query.isEmpty || h.label.toLowerCase().startsWith(query))
+      .toList()
+    ..sort((a, b) => compareHouses(a.label, b.label));
 }
 
 /// Спершу точний збіг назви («Дніпро» → м. Дніпро, а не Верхньодніпровськ),
 /// потім ті, що починаються з запиту, потім решта; міста — вище за села.
 List<AddressOption> sortByRelevance(List<AddressOption> list, String query) {
   final q = query.trim().toLowerCase();
-  String bare(String s) =>
-      s.toLowerCase().replaceFirst(RegExp(r'^(м\.|смт\.?|с-ще|с\.)\s*'), '');
+  String bare(String s) => s.toLowerCase().replaceFirst(
+      RegExp(r'^(м\.|місто|смт\.?|с-ще|селище|с\.|вул\.|вулиця)\s*'), '');
   int rank(AddressOption o) {
+    final l = o.label.toLowerCase();
     final name = bare(o.label);
-    final kind = o.label.startsWith('м.')
+    final kind = l.startsWith('м.') || l.startsWith('місто')
         ? 0
-        : o.label.startsWith('смт')
+        : l.startsWith('смт')
             ? 1
             : 2;
     final match = name == q
@@ -84,77 +98,99 @@ List<AddressOption> sortByRelevance(List<AddressOption> list, String query) {
     });
 }
 
-class DtekAddressSource implements AddressSource {
+// ---------------------------------------------------------------------------
+
+class YasnoAddressSource extends AddressSource {
+  YasnoAddressSource(this.oblast);
+  final Oblast oblast;
+  final _api = YasnoApi();
+
+  @override
+  late final List<AddressLevel> levels = [
+    if (oblast.hasCities)
+      const AddressLevel('Населений пункт', 'Назва міста чи села',
+          minQuery: 2),
+    AddressLevel('Вулиця', 'Назва вулиці',
+        minQuery: oblast.hasCities ? 0 : 2),
+    houseLevel,
+  ];
+
+  AddressOption? _city(List<AddressOption> c) =>
+      oblast.hasCities ? c.first : null;
+
+  @override
+  Future<List<AddressOption>> options(
+      int level, List<AddressOption> chosen, String q) async {
+    final kind = oblast.hasCities ? level : level + 1;
+    switch (kind) {
+      case 0:
+        return sortByRelevance(await _api.cities(oblast, q.trim()), q);
+      case 1:
+        return _api.streets(oblast, _city(chosen), q.trim());
+      default:
+        return filterHouses(
+            await _api.houses(oblast, _city(chosen), chosen.last, ''), q);
+    }
+  }
+
+  @override
+  Future<String?> queue(List<AddressOption> c) =>
+      _api.queue(oblast, _city(c), c[c.length - 2], c.last);
+}
+
+class DtekAddressSource extends AddressSource {
   DtekAddressSource(this.oblast);
   final Oblast oblast;
   Map<String, List<String>>? _streets;
   final _houses = <String, Map<String, Map<String, dynamic>>>{};
 
   @override
-  bool get needsCity => true;
+  final levels = const [cityLevel, streetLevel, houseLevel];
   @override
   bool get isLocal => true;
+  @override
+  String get loadingHint => 'Завантажуємо адреси з сайту DTEK…';
 
   Future<Map<String, List<String>>> _all() async =>
       _streets ??= await DtekBridge.instance.streets(oblast.dtekUrl!);
 
-  static bool _matches(String value, String q) =>
-      q.isEmpty || value.toLowerCase().contains(q.trim().toLowerCase());
-
   @override
-  Future<List<AddressOption>> cities(String q) async {
+  Future<List<AddressOption>> options(
+      int level, List<AddressOption> chosen, String q) async {
     final all = await _all();
-    final list = [
-      for (final c in all.keys)
-        if (_matches(c, q)) AddressOption(c, c),
-    ];
-    return sortByRelevance(list, q).take(80).toList();
-  }
-
-  @override
-  Future<List<AddressOption>> streets(AddressOption? city, String q) async {
-    final all = await _all();
-    final list = (all[city?.id] ?? const <String>[]).toList();
-    // Населений пункт без вулиць: DTEK зберігає порожній рядок.
-    if (list.length == 1 && list.first.isEmpty) {
-      return const [AddressOption('', 'Без вулиці')];
+    switch (level) {
+      case 0:
+        final list = [for (final c in all.keys) AddressOption(c, c)];
+        return sortByRelevance(filterBy(list, (o) => o.label, q), q)
+            .take(80)
+            .toList();
+      case 1:
+        final list = (all[chosen[0].id] ?? const <String>[]).toList();
+        // Населений пункт без вулиць: DTEK зберігає порожній рядок.
+        if (list.length == 1 && list.first.isEmpty) {
+          return const [AddressOption('', 'Без вулиці')];
+        }
+        list.sort();
+        return filterBy([for (final s in list) AddressOption(s, s)],
+                (o) => o.label, q)
+            .take(150)
+            .toList();
+      default:
+        final key = '${chosen[0].id}|${chosen[1].id}';
+        final data = _houses[key] ??= await DtekBridge.instance
+            .houses(oblast.dtekUrl!, chosen[0].id, chosen[1].id);
+        return filterHouses([
+          for (final e in data.entries)
+            AddressOption(e.key, e.key == '-' ? 'Усі будинки' : e.key, {
+              'queue': ((e.value['sub_type_reason'] as List?) ?? const [])
+                  .map((x) => '$x')
+                  .firstOrNull,
+            }),
+        ], q);
     }
-    list.sort();
-    return [
-      for (final s in list.where((s) => _matches(s, q)).take(150))
-        AddressOption(s, s),
-    ];
   }
 
   @override
-  Future<List<AddressOption>> houses(
-      AddressOption? city, AddressOption street, String q) async {
-    final key = '${city?.id}|${street.id}';
-    final data = _houses[key] ??=
-        await DtekBridge.instance.houses(oblast.dtekUrl!, city!.id, street.id);
-    final list = data.keys.toList()..sort(_compareHouses);
-    return [
-      for (final h in list.where((h) =>
-          q.isEmpty || h.toLowerCase().startsWith(q.trim().toLowerCase())))
-        AddressOption(h, h == '-' ? 'Усі будинки' : h, {
-          'queue': ((data[h]!['sub_type_reason'] as List?) ?? const [])
-              .cast<Object>()
-              .map((e) => '$e')
-              .firstOrNull,
-        }),
-    ];
-  }
-
-  @override
-  Future<String?> queue(AddressOption? city, AddressOption street,
-          AddressOption house) async =>
-      house.extra['queue'] as String?;
-
-  /// 2, 4, 10, 10А — за числом, потім за рештою.
-  static int _compareHouses(String a, String b) {
-    int n(String s) =>
-        int.tryParse(RegExp(r'^\d+').stringMatch(s) ?? '') ?? 1 << 30;
-    final c = n(a).compareTo(n(b));
-    return c != 0 ? c : a.compareTo(b);
-  }
+  Future<String?> queue(List<AddressOption> c) async =>
+      AddressSource.queueOf(c.last);
 }

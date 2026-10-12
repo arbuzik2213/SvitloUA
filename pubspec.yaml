@@ -1,7 +1,7 @@
 name: svitlo_ua
 description: Графіки відключень світла DTEK по Україні.
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: ^3.5.0
@@ -22,6 +22,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/certs/
   fonts:
     - family: Unbounded
       fonts:

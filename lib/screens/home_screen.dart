@@ -73,10 +73,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final oblast = oblastById(address?.oblastId ?? await SavedOblast.load());
     setState(() {
       _oblast = oblast;
-      _address = oblast?.supportsAddress == true ? address : null;
+      _address = oblast?.needsAddress == true ? address : null;
       _restored = true;
     });
-    if (oblast == null || (oblast.supportsAddress && _address == null)) {
+    if (oblast == null || (oblast.needsAddress && _address == null)) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _changeAddress());
       return;
     }
@@ -85,7 +85,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _load() async {
     final oblast = _oblast;
-    if (oblast == null || !oblast.supportsAddress || _loading) return;
+    if (oblast == null || _address == null || !oblast.nativeSchedule || _loading) {
+      return;
+    }
     final address = _address;
     setState(() {
       _loading = true;
@@ -116,8 +118,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _result = null;
       _error = null;
     });
-    if (r.address == null) {
-      // Область без пошуку за адресою — одразу показуємо сторінку обленерго.
+    if (r.address == null && r.oblast.imageUrl == null) {
+      // Графік лише на сайті обленерго — одразу показуємо його сторінку.
       if (mounted) {
         await openOfficialPage(context, r.oblast.company, r.oblast.webUrl);
       }
@@ -165,19 +167,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  String _oblastTitle(Oblast o) =>
-      o.id == 'kyiv' ? o.name : '${o.name} область';
-
   Widget _header(Palette p, Oblast? oblast) {
     final a = _address;
-    final title =
-        a?.line ?? (oblast == null ? 'Оберіть' : _oblastTitle(oblast));
-    final sub = a == null
+    final hasLine = a != null && a.hasAddress;
+    final title = hasLine ? a.line : (oblast?.title ?? 'Оберіть');
+    final sub = !hasLine
         ? null
-        : [
-            if (a.place.isNotEmpty) a.place,
-            if (oblast != null) _oblastTitle(oblast)
-          ].join(' · ');
+        : [if (a.place.isNotEmpty) a.place, if (oblast != null) oblast.title]
+            .join(' · ');
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
@@ -190,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(a == null ? 'ОБЛАСТЬ' : 'АДРЕСА', style: label(p.muted)),
+                  Text(hasLine ? 'АДРЕСА' : 'ОБЛАСТЬ', style: label(p.muted)),
                   const SizedBox(height: 4),
                   Row(children: [
                     Flexible(
@@ -258,7 +255,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ];
     }
 
-    if (!oblast.supportsAddress) return _officialOnly(p, oblast);
+    if (oblast.imageUrl != null) return _imageOnly(p, oblast);
+    if (!oblast.nativeSchedule && !oblast.needsAddress) {
+      return _officialOnly(p, oblast);
+    }
 
     if (_address == null) {
       return [
@@ -275,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return [
           const SizedBox(height: 160),
           const Center(child: CupertinoActivityIndicator(radius: 14)),
-          if (oblast.kind == SourceKind.dtek) ...[
+          if (oblast.kind == RegionKind.dtek) ...[
             const SizedBox(height: 14),
             Center(
               child: Text('Завантажуємо графік з сайту DTEK…',
@@ -320,7 +320,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       widgets.add(_NoticeCard(text: result.notice!));
     }
 
-    if (schedule.days.isEmpty) {
+    if (!oblast.nativeSchedule) {
+      widgets.addAll(_noScheduleSource(p, oblast, result));
+    } else if (schedule.days.isEmpty) {
       widgets.addAll(_noOutages(p, schedule));
     } else if (queue == null || !schedule.queueNames.containsKey(queue)) {
       widgets.addAll(_queueMissing(p));
@@ -344,15 +346,79 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           style: display(26, color: p.ink)),
       const SizedBox(height: 14),
       Text(
-        'Для цієї області застосунок поки не вміє сам шукати чергу за адресою. '
-        'Відкрийте офіційну сторінку обленерго — вона відкриється тут, '
-        'у застосунку, — і введіть адресу там.',
+        oblast.note ??
+            'Обленерго публікує графік лише на своєму сайті. Він відкриється '
+                'тут, у застосунку.',
         style: body(15.5, color: p.muted),
       ),
+      if (oblast.queueHelpUrl != null) ...[
+        const SizedBox(height: 12),
+        _TextButton(
+          text: 'Список адрес за чергами',
+          onTap: () => openOfficialPage(
+              context, 'Черги за адресами', oblast.queueHelpUrl!),
+        ),
+      ],
       const SizedBox(height: 24),
       _TextButton(
         text: 'Відкрити графік',
         filled: true,
+        onTap: () => openOfficialPage(context, oblast.company, oblast.webUrl),
+      ),
+    ];
+  }
+
+  /// Чернігів: години ГПВ лише картинкою — показуємо її в застосунку.
+  List<Widget> _imageOnly(Palette p, Oblast oblast) {
+    return [
+      const SizedBox(height: 24),
+      Text('Графік ГПВ', style: display(26, color: p.ink)),
+      const SizedBox(height: 10),
+      if (oblast.note != null)
+        Text(oblast.note!, style: body(15, color: p.muted)),
+      const SizedBox(height: 18),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: InteractiveViewer(
+          maxScale: 5,
+          child: Image.network(
+            oblast.imageUrl!,
+            fit: BoxFit.contain,
+            loadingBuilder: (_, child, progress) => progress == null
+                ? child
+                : const Padding(
+                    padding: EdgeInsets.all(48),
+                    child: Center(child: CupertinoActivityIndicator()),
+                  ),
+            errorBuilder: (_, __, ___) => Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Не вдалося завантажити картинку.',
+                  style: body(14, color: p.muted)),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 18),
+      _TextButton(
+        text: 'Сайт обленерго',
+        onTap: () => openOfficialPage(context, oblast.company, oblast.webUrl),
+      ),
+    ];
+  }
+
+  /// Хмельниччина: графіка немає, є черга й поточні відключення за адресою.
+  List<Widget> _noScheduleSource(Palette p, Oblast oblast, LoadResult r) {
+    return [
+      const SizedBox(height: 28),
+      Text(
+        r.notice == null ? 'Зараз відключень\nза адресою немає' : 'Є відключення',
+        style: display(26, color: p.ink),
+      ),
+      const SizedBox(height: 12),
+      if (oblast.note != null) Text(oblast.note!, style: body(15, color: p.muted)),
+      const SizedBox(height: 20),
+      _TextButton(
+        text: 'Сайт обленерго',
         onTap: () => openOfficialPage(context, oblast.company, oblast.webUrl),
       ),
     ];

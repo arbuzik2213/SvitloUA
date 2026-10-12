@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:svitlo_ua/models.dart';
+import 'package:svitlo_ua/sources/common.dart';
 import 'package:svitlo_ua/sources/yasno.dart';
 
 void main() {
@@ -81,5 +82,48 @@ void main() {
     // 1 січня 2026 00:00 UTC = 02:00 за Києвом.
     expect(kyivTime(1767225600), '02:00');
     expect(kyivDate(day), '12 жовтня, понеділок');
+  });
+
+  test('текстові графіки обленерго', () {
+    const html = '<p>Години відсутності електропостачання:</p>'
+        '<p>1.1 10<span>:00 - 12:00,&nbsp;</span><span>18:00 - 20:00</span></p>'
+        '<p>2.2 не вимикається</p>'
+        '<p>Група 3.1. Електроенергії немає з 08:00 до 10:30, з 22:00 до 24:00.</p>'
+        '<p>4.2 06:00-08:00 (можливо)</p>';
+    final q = parseQueueLines(htmlToText(html));
+    String spans(String k) => q[k]!.map((s) => '${s.from}-${s.to}').join(',');
+    expect(spans('GPV1.1'), '600-720,1080-1200');
+    expect(q['GPV2.2'], isEmpty);
+    expect(spans('GPV3.1'), '480-630,1320-1440');
+    expect(q['GPV4.2']!.single.power, Power.maybe);
+
+    final slots = slotsFromSpans(q['GPV3.1']!);
+    expect(slots[16], Power.off); // 08:00
+    expect(slots[21], Power.on); // 10:30
+    expect(slots[47], Power.off); // 23:30
+  });
+
+  test('черга з тексту обленерго', () {
+    expect(queueFromText('Графік погодинних відключень - 3 черга 1 підчерга'), 'GPV3.1');
+    expect(queueFromText('ваша адреса відноситься до підчерги: 6.1'), 'GPV6.1');
+    expect(queueFromText('в чергу не включено'), isNull);
+  });
+
+  test('дати й windows-1251', () {
+    expect(findKyivDate('на 13 жовтня', now: day), day + 86400);
+    expect(findKyivDate('13.10.2026'), day + 86400);
+    expect(findKyivDate('2026-10-12T00:00:00+00:00'), day);
+    expect(kyivMidnight(2026, 10, 12), day);
+    // «Житомир» у windows-1251
+    expect(decodeCp1251([0xC6, 0xE8, 0xF2, 0xEE, 0xEC, 0xE8, 0xF0]), 'Житомир');
+    expect(decodeCp1251([0xB2, 0xBF, 0xAA, 0xA5]), 'ІїЄҐ');
+  });
+
+  test('кеш графіка туди й назад', () {
+    final s = scheduleFromSpans({
+      kyivToday(): {'GPV1.1': [const Span(60, 120)]},
+    }, source: 'test');
+    final back = RegionSchedule.fromJson(s.toJson());
+    expect(back.days.values.first['GPV1.1']!.slots, s.days.values.first['GPV1.1']!.slots);
   });
 }

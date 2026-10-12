@@ -118,6 +118,47 @@ class RegionSchedule {
 
   List<int> get sortedDays => days.keys.toList()..sort();
 
+  static const _codes = {Power.on: '0', Power.off: '1', Power.maybe: '2'};
+
+  /// Компактний JSON для кешу: слоти дня — рядок з 48 символів 0/1/2.
+  Map<String, dynamic> toJson() => {
+        'names': queueNames,
+        'updated': updated,
+        'today': today,
+        'source': source,
+        'days': {
+          for (final d in days.entries)
+            '${d.key}': {
+              for (final q in d.value.entries)
+                q.key: q.value.slots.map((p) => _codes[p]).join(),
+            },
+        },
+      };
+
+  factory RegionSchedule.fromJson(Map<String, dynamic> j) {
+    Power p(String c) => c == '1'
+        ? Power.off
+        : c == '2'
+            ? Power.maybe
+            : Power.on;
+    return RegionSchedule(
+      queueNames: Map<String, String>.from(j['names'] as Map),
+      updated: '${j['updated'] ?? ''}',
+      today: (j['today'] as num?)?.toInt() ?? 0,
+      source: '${j['source'] ?? ''}',
+      days: {
+        for (final d in (j['days'] as Map).entries)
+          int.parse('${d.key}'): {
+            for (final q in (d.value as Map).entries)
+              '${q.key}': DaySchedule(
+                int.parse('${d.key}'),
+                '${q.value}'.split('').map(p).toList(),
+              ),
+          },
+      },
+    );
+  }
+
   /// Усі слоти черги підряд (сьогодні, завтра...) як інтервали.
   List<PowerInterval> intervalsFor(String queue) {
     final result = <PowerInterval>[];
