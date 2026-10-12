@@ -10,8 +10,8 @@
 
 ## Збірка
 
-GitHub Actions збирає `Svitlo.apk` і `Svitlo.ipa` на кожен пуш у `main` —
-файли зʼявляються в Releases.
+GitHub Actions збирає `Svitlo.ipa` для iPhone на кожен пуш у `main` —
+файл зʼявляється в Releases.
 
 IPA не підписана: на iPhone її ставлять через Sideloadly або AltStore
 з власним Apple ID (безкоштовний акаунт — на 7 днів, потім переставити).
