@@ -6,7 +6,7 @@ import '../theme.dart';
 import '../widgets/day_strip.dart';
 import '../widgets/pressable.dart';
 
-/// Усі черги регіону на обраний день. Тап по черзі повертає її ключ.
+/// Усі черги регіону на обраний день.
 class AllQueuesScreen extends StatefulWidget {
   const AllQueuesScreen({
     super.key,
@@ -91,7 +91,8 @@ class _AllQueuesScreenState extends State<AllQueuesScreen> {
                                     : d > widget.schedule.today
                                         ? 'Завтра'
                                         : kyivShortDate(d),
-                                style: body(14, weight: FontWeight.w500, color: p.ink),
+                                style: body(14,
+                                    weight: FontWeight.w500, color: p.ink),
                               ),
                             ),
                         },
@@ -112,51 +113,49 @@ class _AllQueuesScreenState extends State<AllQueuesScreen> {
             sliver: SliverList.list(children: [
               for (final key in widget.schedule.queueNames.keys)
                 if (queues[key] != null)
-                  Pressable(
-                    onTap: () => Navigator.pop(context, key),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: p.line)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Text(
-                              queueShort(key),
-                              style: display(15,
-                                  weight: key == widget.selected
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                  color: p.ink),
-                            ),
-                            if (key == widget.selected) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                width: 7,
-                                height: 7,
-                                decoration: BoxDecoration(
-                                    color: p.light, shape: BoxShape.circle),
-                              ),
-                            ],
-                            const Spacer(),
-                            Text(
-                              queues[key]!.offSeconds == 0
-                                  ? 'без відключень'
-                                  : 'без світла ${formatDuration(queues[key]!.offSeconds)}',
-                              style: numbers(13, weight: FontWeight.w400, color: p.muted),
-                            ),
-                          ]),
-                          const SizedBox(height: 10),
-                          DayStrip(
-                            day: queues[key]!,
-                            now: widget.now,
-                            height: 14,
-                            showHours: false,
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: p.line)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Text(
+                            queueShort(key),
+                            style: display(15,
+                                weight: key == widget.selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: p.ink),
                           ),
-                        ],
-                      ),
+                          if (key == widget.selected) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                  color: p.light, shape: BoxShape.circle),
+                            ),
+                          ],
+                          const Spacer(),
+                          Text(
+                            queues[key]!.offSeconds == 0
+                                ? 'без відключень'
+                                : 'без світла ${formatDuration(queues[key]!.offSeconds)}',
+                            style: numbers(13,
+                                weight: FontWeight.w400, color: p.muted),
+                          ),
+                        ]),
+                        const SizedBox(height: 10),
+                        DayStrip(
+                          day: queues[key]!,
+                          now: widget.now,
+                          height: 14,
+                          showHours: false,
+                        ),
+                      ],
                     ),
                   ),
             ]),

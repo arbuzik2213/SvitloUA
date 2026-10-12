@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'screens/home_screen.dart';
+import 'sources/dtek_bridge.dart';
 import 'theme.dart';
 
 void main() {
@@ -27,7 +28,7 @@ class SvitloApp extends StatelessWidget {
             statusBarColor: Colors.transparent,
             systemNavigationBarColor: context.palette.paper,
           ),
-          child: child!,
+          child: DtekBridgeHost(child: child!),
         );
       },
       home: const HomeScreen(),

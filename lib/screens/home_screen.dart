@@ -2,18 +2,18 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
-import '../dtek_service.dart';
+import '../address.dart';
 import '../models.dart';
 import '../regions.dart';
+import '../sources/schedule_service.dart';
 import '../theme.dart';
 import '../widgets/day_strip.dart';
 import '../widgets/dial.dart';
 import '../widgets/pressable.dart';
+import 'address_screen.dart';
 import 'all_queues_screen.dart';
-import 'pickers.dart';
+import 'web_page_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,10 +23,11 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  final _service = DtekService();
+  final _service = ScheduleService();
 
-  DtekRegion? _region;
-  String? _queue;
+  Oblast? _oblast;
+  SavedAddress? _address;
+  bool _restored = false;
   LoadResult? _result;
   String? _error;
   bool _loading = false;
@@ -35,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Timer? _autoRefresh;
 
   static int _unixNow() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+  String? get _queue => _address?.queue;
 
   @override
   void initState() {
@@ -66,94 +69,81 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _restore() async {
-    final prefs = await SharedPreferences.getInstance();
-    final regionId = prefs.getString('region');
-    final region = dtekRegions.where((r) => r.id == regionId).firstOrNull;
-    if (region == null) {
-      if (mounted) setState(() {});
-      WidgetsBinding.instance.addPostFrameCallback((_) => _pickRegion());
+    final address = await SavedAddress.load();
+    final oblast = oblastById(address?.oblastId ?? await SavedOblast.load());
+    setState(() {
+      _oblast = oblast;
+      _address = oblast?.supportsAddress == true ? address : null;
+      _restored = true;
+    });
+    if (oblast == null || (oblast.supportsAddress && _address == null)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _changeAddress());
       return;
     }
-    setState(() {
-      _region = region;
-      _queue = prefs.getString('queue_${region.id}');
-    });
     await _load();
   }
 
   Future<void> _load() async {
-    final region = _region;
-    if (region == null || _loading) return;
+    final oblast = _oblast;
+    if (oblast == null || !oblast.supportsAddress || _loading) return;
+    final address = _address;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final result = await _service.load(region);
-      if (!mounted || region != _region) return;
+      final result = await _service.load(oblast, address);
+      if (!mounted || address != _address) return;
       setState(() {
         _result = result;
         _now = _unixNow();
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = '$e');
+      setState(() => _error = '$e'.replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _pickRegion() async {
-    final region = await showRegionSheet(context, selectedId: _region?.id);
-    if (region == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('region', region.id);
+  Future<void> _changeAddress() async {
+    final r = await pickAddress(context);
+    if (r == null) return;
+    await SavedOblast.save(r.oblast.id);
     setState(() {
-      _region = region;
-      _queue = prefs.getString('queue_${region.id}');
+      _oblast = r.oblast;
+      _address = r.address;
       _result = null;
+      _error = null;
     });
+    if (r.address == null) {
+      // Область без пошуку за адресою — одразу показуємо сторінку обленерго.
+      if (mounted) {
+        await openOfficialPage(context, r.oblast.company, r.oblast.webUrl);
+      }
+      return;
+    }
     await _load();
-    if (_queue == null && mounted) await _pickQueue();
-  }
-
-  Future<void> _setQueue(String? queue) async {
-    if (queue == null || _region == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('queue_${_region!.id}', queue);
-    setState(() => _queue = queue);
-  }
-
-  Future<void> _pickQueue() async {
-    final schedule = _result?.schedule;
-    if (schedule == null || schedule.queueNames.isEmpty) return;
-    final queue = await showQueueSheet(
-      context,
-      queueNames: schedule.queueNames,
-      selected: _queue,
-    );
-    await _setQueue(queue);
   }
 
   Future<void> _openAllQueues() async {
-    final queue = await Navigator.push<String>(
+    await Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (_) => AllQueuesScreen(
           schedule: _result!.schedule,
-          regionName: _region!.name,
+          regionName: _oblast!.name,
           now: _now,
           selected: _queue,
         ),
       ),
     );
-    await _setQueue(queue);
   }
 
   @override
   Widget build(BuildContext context) {
     final p = context.palette;
-    final region = _region;
+    final oblast = _oblast;
 
     return Scaffold(
       body: CustomScrollView(
@@ -163,21 +153,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         slivers: [
           SliverSafeArea(
             bottom: false,
-            sliver: SliverToBoxAdapter(child: _header(p, region)),
+            sliver: SliverToBoxAdapter(child: _header(p, oblast)),
           ),
-          if (region != null) CupertinoSliverRefreshControl(onRefresh: _load),
+          if (_address != null) CupertinoSliverRefreshControl(onRefresh: _load),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
-            sliver: SliverList.list(children: _content(p, region)),
+            sliver: SliverList.list(children: _content(p, oblast)),
           ),
         ],
       ),
     );
   }
 
-  Widget _header(Palette p, DtekRegion? region) {
-    final schedule = _result?.schedule;
-    final queue = schedule?.queueNames.containsKey(_queue) == true ? _queue : null;
+  String _oblastTitle(Oblast o) =>
+      o.id == 'kyiv' ? o.name : '${o.name} область';
+
+  Widget _header(Palette p, Oblast? oblast) {
+    final a = _address;
+    final title =
+        a?.line ?? (oblast == null ? 'Оберіть' : _oblastTitle(oblast));
+    final sub = a == null
+        ? null
+        : [
+            if (a.place.isNotEmpty) a.place,
+            if (oblast != null) _oblastTitle(oblast)
+          ].join(' · ');
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Row(
@@ -185,82 +186,102 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         children: [
           Expanded(
             child: Pressable(
-              onTap: _pickRegion,
+              onTap: _changeAddress,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('РЕГІОН', style: label(p.muted)),
+                  Text(a == null ? 'ОБЛАСТЬ' : 'АДРЕСА', style: label(p.muted)),
                   const SizedBox(height: 4),
                   Row(children: [
                     Flexible(
                       child: Text(
-                        region?.name ?? 'Оберіть',
+                        title,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: display(19, weight: FontWeight.w500, color: p.ink),
+                        style:
+                            display(19, weight: FontWeight.w500, color: p.ink),
                       ),
                     ),
                     const SizedBox(width: 4),
                     Icon(CupertinoIcons.chevron_down, size: 15, color: p.muted),
                   ]),
+                  if (sub != null && sub.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: body(13, color: p.muted)),
+                  ],
                 ],
               ),
             ),
           ),
-          if (schedule != null && schedule.queueNames.isNotEmpty)
-            Pressable(
-              onTap: _pickQueue,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 9),
-                decoration: BoxDecoration(
-                  color: queue == null ? p.ink : p.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: queue == null ? p.ink : p.line),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'ЧЕРГА',
-                      style: label(queue == null ? p.paper.withValues(alpha: 0.7) : p.muted)
-                          .copyWith(fontSize: 10),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      queue == null ? 'обрати' : queueShort(queue),
-                      style: display(18,
-                          weight: FontWeight.w600,
-                          color: queue == null ? p.paper : p.ink),
-                    ),
-                  ],
-                ),
+          if (_queue != null) ...[
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 9),
+              decoration: BoxDecoration(
+                color: p.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: p.line),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('ЧЕРГА', style: label(p.muted).copyWith(fontSize: 10)),
+                  const SizedBox(height: 2),
+                  Text(queueShort(_queue!),
+                      style:
+                          display(18, weight: FontWeight.w600, color: p.ink)),
+                ],
               ),
             ),
+          ],
         ],
       ),
     );
   }
 
-  List<Widget> _content(Palette p, DtekRegion? region) {
-    if (region == null) {
+  List<Widget> _content(Palette p, Oblast? oblast) {
+    if (oblast == null) {
+      if (!_restored) return const [];
       return [
         const SizedBox(height: 120),
         Text('Коли вимкнуть світло', style: display(28, color: p.ink)),
         const SizedBox(height: 12),
         Text(
-          'Графіки відключень DTEK для вашої черги. Оберіть регіон, щоб почати.',
+          'Введіть адресу — і побачите графік відключень саме для вашого будинку.',
           style: body(16, color: p.muted),
         ),
         const SizedBox(height: 24),
-        _TextButton(text: 'Обрати регіон', onTap: _pickRegion, filled: true),
+        _TextButton(text: 'Ввести адресу', onTap: _changeAddress, filled: true),
+      ];
+    }
+
+    if (!oblast.supportsAddress) return _officialOnly(p, oblast);
+
+    if (_address == null) {
+      return [
+        const SizedBox(height: 120),
+        Text('Вкажіть адресу', style: display(28, color: p.ink)),
+        const SizedBox(height: 24),
+        _TextButton(text: 'Ввести адресу', onTap: _changeAddress, filled: true),
       ];
     }
 
     final result = _result;
     if (result == null) {
       if (_loading || _error == null) {
-        return const [
-          SizedBox(height: 160),
-          Center(child: CupertinoActivityIndicator(radius: 14)),
+        return [
+          const SizedBox(height: 160),
+          const Center(child: CupertinoActivityIndicator(radius: 14)),
+          if (oblast.kind == SourceKind.dtek) ...[
+            const SizedBox(height: 14),
+            Center(
+              child: Text('Завантажуємо графік з сайту DTEK…',
+                  style: body(14, color: p.muted)),
+            ),
+          ],
         ];
       }
       return [
@@ -269,22 +290,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         const SizedBox(height: 12),
         Text(_error!, style: body(14, color: p.muted)),
         const SizedBox(height: 24),
-        Row(children: [
+        Wrap(spacing: 10, runSpacing: 10, children: [
           _TextButton(text: 'Ще раз', onTap: _load, filled: true),
-          const SizedBox(width: 10),
           _TextButton(
-            text: 'Сайт DTEK',
-            onTap: () => launchUrl(
-              Uri.parse(region.shutdownsUrl),
-              mode: LaunchMode.externalApplication,
-            ),
+            text: 'Офіційний сайт',
+            onTap: () =>
+                openOfficialPage(context, oblast.company, oblast.webUrl),
           ),
         ]),
       ];
     }
 
     final schedule = result.schedule;
-    final queue = schedule.queueNames.containsKey(_queue) ? _queue : null;
+    final queue = _queue;
     final widgets = <Widget>[];
 
     if (result.fromCache) {
@@ -297,10 +315,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ));
     }
 
+    if (result.notice != null) {
+      widgets.add(const SizedBox(height: 16));
+      widgets.add(_NoticeCard(text: result.notice!));
+    }
+
     if (schedule.days.isEmpty) {
       widgets.addAll(_noOutages(p, schedule));
-    } else if (queue == null) {
-      widgets.addAll(_chooseQueue(p, schedule));
+    } else if (queue == null || !schedule.queueNames.containsKey(queue)) {
+      widgets.addAll(_queueMissing(p));
     } else {
       widgets.addAll(_queueView(p, schedule, queue));
     }
@@ -308,10 +331,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widgets.add(const SizedBox(height: 40));
     widgets.add(Text(
       'Дані: ${schedule.source}'
-      '${schedule.updated.isEmpty ? '' : '\nDTEK оновив ${schedule.updated}'}',
+      '${schedule.updated.isEmpty ? '' : '\nОновлено ${schedule.updated}'}',
       style: body(12, color: p.muted, height: 1.5),
     ));
     return widgets;
+  }
+
+  List<Widget> _officialOnly(Palette p, Oblast oblast) {
+    return [
+      const SizedBox(height: 72),
+      Text('Графік — на сайті\n${oblast.company}',
+          style: display(26, color: p.ink)),
+      const SizedBox(height: 14),
+      Text(
+        'Для цієї області застосунок поки не вміє сам шукати чергу за адресою. '
+        'Відкрийте офіційну сторінку обленерго — вона відкриється тут, '
+        'у застосунку, — і введіть адресу там.',
+        style: body(15.5, color: p.muted),
+      ),
+      const SizedBox(height: 24),
+      _TextButton(
+        text: 'Відкрити графік',
+        filled: true,
+        onTap: () => openOfficialPage(context, oblast.company, oblast.webUrl),
+      ),
+    ];
   }
 
   List<Widget> _noOutages(Palette p, RegionSchedule schedule) {
@@ -327,28 +371,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       const SizedBox(height: 28),
       Text(
-        'DTEK зараз не публікує графік відключень для цього регіону. '
+        'Зараз графік відключень для вашої адреси не діє. '
         'Якщо він зʼявиться — потягніть екран вниз, щоб оновити.',
         style: body(15, color: p.muted),
       ),
     ];
   }
 
-  List<Widget> _chooseQueue(Palette p, RegionSchedule schedule) {
+  List<Widget> _queueMissing(Palette p) {
     return [
       const SizedBox(height: 64),
-      Text('Яка у вас\nчерга?', style: display(30, color: p.ink)),
+      Text('Черги ${queueShort(_queue ?? '')}\nнемає в графіку',
+          style: display(26, color: p.ink)),
       const SizedBox(height: 12),
       Text(
-        'Оберіть її, і застосунок покаже, коли саме вимкнуть світло.',
-        style: body(16, color: p.muted),
+        'Графік опубліковано, але вашої черги в ньому немає — '
+        'найімовірніше, відключень для неї не заплановано.',
+        style: body(15.5, color: p.muted),
       ),
       const SizedBox(height: 24),
-      Row(children: [
-        _TextButton(text: 'Обрати чергу', onTap: _pickQueue, filled: true),
-        const SizedBox(width: 10),
-        _TextButton(text: 'Усі черги', onTap: _openAllQueues),
-      ]),
+      _TextButton(text: 'Усі черги', onTap: _openAllQueues),
     ];
   }
 
@@ -372,7 +414,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       subtitle = 'графік на зараз\nще не опубліковано';
     } else {
       final ends = current.end;
-      final endsText = _isLastSlot(intervals, current) ? 'до кінця графіка' : 'до ${kyivTime(ends)}';
+      final endsText = _isLastSlot(intervals, current)
+          ? 'до кінця графіка'
+          : 'до ${kyivTime(ends)}';
       switch (current.power) {
         case Power.on:
           title = 'Світло є';
@@ -381,7 +425,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         case Power.maybe:
           title = 'Можливо';
       }
-      subtitle = current.power == Power.off ? 'увімкнуть о ${kyivTime(ends)}' : endsText;
+      subtitle = current.power == Power.off
+          ? 'увімкнуть о ${kyivTime(ends)}'
+          : endsText;
       left = 'ще ${formatDuration(ends - _now)}';
     }
 
@@ -402,7 +448,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (current?.power != Power.off) {
       widgets.add(_NextCard(
         title: 'НАСТУПНЕ ВІДКЛЮЧЕННЯ',
-        value: next == null ? 'Не заплановано' : '${kyivTime(next.start)} – ${kyivTime(next.end)}',
+        value: next == null
+            ? 'Не заплановано'
+            : '${kyivTime(next.start)} – ${kyivTime(next.end)}',
         note: next == null
             ? 'в опублікованому графіку'
             : '${_dayWord(schedule, next.start)} · ${formatDuration(next.duration)}'
@@ -425,7 +473,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           border: Border.symmetric(horizontal: BorderSide(color: p.line)),
         ),
         child: Row(children: [
-          Text('Графік усіх черг', style: body(16, weight: FontWeight.w500, color: p.ink)),
+          Text('Графік усіх черг',
+              style: body(16, weight: FontWeight.w500, color: p.ink)),
           const Spacer(),
           Icon(CupertinoIcons.chevron_right, size: 16, color: p.muted),
         ]),
@@ -438,7 +487,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       identical(intervals.last, iv);
 
   String _dayWord(RegionSchedule schedule, int t) {
-    final dayStart = schedule.sortedDays.lastWhere((d) => d <= t, orElse: () => t);
+    final dayStart =
+        schedule.sortedDays.lastWhere((d) => d <= t, orElse: () => t);
     if (dayStart == schedule.today) return 'сьогодні';
     if (dayStart > schedule.today) return 'завтра';
     return kyivShortDate(t);
@@ -460,7 +510,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
         if (left != null) ...[
           const SizedBox(height: 4),
-          Text(left, style: numbers(13, weight: FontWeight.w400, color: p.muted)),
+          Text(left,
+              style: numbers(13, weight: FontWeight.w400, color: p.muted)),
         ],
       ],
     );
@@ -475,7 +526,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ) {
     final dayEnd = day + 86400;
     final off = intervals
-        .where((iv) => iv.power != Power.on && iv.start < dayEnd && iv.end > day)
+        .where(
+            (iv) => iv.power != Power.on && iv.start < dayEnd && iv.end > day)
         .toList();
     final heading = day == schedule.today
         ? 'Сьогодні'
@@ -525,8 +577,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Text(
                 '${kyivTime(iv.start < day ? day : iv.start)} – '
                 '${iv.end >= dayEnd ? '24:00' : kyivTime(iv.end)}',
-                style: numbers(16.5,
-                    color: iv.end <= _now ? p.muted : p.ink),
+                style: numbers(16.5, color: iv.end <= _now ? p.muted : p.ink),
               ),
               const Spacer(),
               Text(
@@ -548,8 +599,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 }
 
+class _NoticeCard extends StatelessWidget {
+  const _NoticeCard({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+      decoration: BoxDecoration(
+        color: p.dark,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('ЗАРАЗ ДЛЯ ВАШОГО БУДИНКУ', style: label(p.light)),
+          const SizedBox(height: 8),
+          Text(text, style: body(15.5, color: Colors.white, height: 1.4)),
+        ],
+      ),
+    );
+  }
+}
+
 class _NextCard extends StatelessWidget {
-  const _NextCard({required this.title, required this.value, required this.note});
+  const _NextCard(
+      {required this.title, required this.value, required this.note});
 
   final String title;
   final String value;
@@ -570,8 +647,10 @@ class _NextCard extends StatelessWidget {
         children: [
           Text(title, style: label(p.muted)),
           const SizedBox(height: 10),
-          Text(value, style: display(26, weight: FontWeight.w500, color: p.ink)
-              .copyWith(fontFeatures: const [FontFeature.tabularFigures()])),
+          Text(value,
+              style: display(26, weight: FontWeight.w500, color: p.ink)
+                  .copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()])),
           const SizedBox(height: 6),
           Text(note, style: body(14, color: p.muted)),
         ],
@@ -581,7 +660,8 @@ class _NextCard extends StatelessWidget {
 }
 
 class _TextButton extends StatelessWidget {
-  const _TextButton({required this.text, required this.onTap, this.filled = false});
+  const _TextButton(
+      {required this.text, required this.onTap, this.filled = false});
 
   final String text;
   final VoidCallback onTap;
@@ -601,7 +681,8 @@ class _TextButton extends StatelessWidget {
         ),
         child: Text(
           text,
-          style: body(15.5, weight: FontWeight.w500, color: filled ? p.paper : p.ink),
+          style: body(15.5,
+              weight: FontWeight.w500, color: filled ? p.paper : p.ink),
         ),
       ),
     );

@@ -1,91 +1,241 @@
-/// Регіон, для якого DTEK публікує графіки на своєму сайті.
-class DtekRegion {
+/// Звідки беремо графік і чергу за адресою.
+enum SourceKind {
+  /// API Yasno: пошук адреси і графік без захисту від ботів.
+  yasno,
+
+  /// Сайт DTEK: працюємо через невидимий браузер, бо сайти закриті Incapsula.
+  dtek,
+
+  /// Своє обленерго: показуємо його офіційну сторінку в застосунку.
+  web,
+}
+
+class Oblast {
   final String id;
   final String name;
   final String company;
+  final SourceKind kind;
 
-  /// Сторінка DTEK, де в HTML лежить `DisconSchedule.fact`.
-  final String shutdownsUrl;
+  /// Yasno: регіон і оператори мереж (у Дніпропетровській їх два — DTEK і ЦЕК).
+  final int? yasnoRegion;
+  final List<int> yasnoDsos;
 
-  /// Дзеркало тих самих даних DTEK (outage-data-ua парсить сайти DTEK).
-  /// Використовується, коли сайт закритий антибот-захистом.
+  /// Yasno: чи треба спершу обрати населений пункт (Київ — ні).
+  final bool hasCities;
+
+  /// Сторінка DTEK з `DisconSchedule` (для [SourceKind.dtek]).
+  final String? dtekUrl;
+
+  /// Дзеркало даних DTEK, коли сайт недоступний.
   final String? mirrorUrl;
 
-  const DtekRegion({
+  /// Офіційна сторінка з графіком / пошуком за адресою.
+  final String webUrl;
+
+  const Oblast({
     required this.id,
     required this.name,
     required this.company,
-    required this.shutdownsUrl,
+    required this.kind,
+    required this.webUrl,
+    this.yasnoRegion,
+    this.yasnoDsos = const [],
+    this.hasCities = true,
+    this.dtekUrl,
     this.mirrorUrl,
   });
+
+  bool get supportsAddress => kind != SourceKind.web;
 }
 
 const _mirror =
     'https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data';
 
-const dtekRegions = <DtekRegion>[
-  DtekRegion(
+/// Усі області, крім тимчасово окупованих. Порядок — за алфавітом,
+/// Київ першим.
+const oblasts = <Oblast>[
+  Oblast(
     id: 'kyiv',
     name: 'Київ',
     company: 'ДТЕК Київські електромережі',
-    shutdownsUrl: 'https://www.dtek-kem.com.ua/ua/shutdowns',
+    kind: SourceKind.yasno,
+    yasnoRegion: 25,
+    yasnoDsos: [902],
+    hasCities: false,
     mirrorUrl: '$_mirror/kyiv.json',
+    webUrl: 'https://www.dtek-kem.com.ua/ua/shutdowns',
   ),
-  DtekRegion(
-    id: 'kyiv-region',
-    name: 'Київська область',
-    company: 'ДТЕК Київські регіональні електромережі',
-    shutdownsUrl: 'https://www.dtek-krem.com.ua/ua/shutdowns',
-    mirrorUrl: '$_mirror/kyiv-region.json',
+  Oblast(
+    id: 'vinnytsia',
+    name: 'Вінницька',
+    company: 'Вінницяобленерго',
+    kind: SourceKind.web,
+    webUrl:
+        'https://www.voe.com.ua/informatsiya-pro-cherhy-hrafika-pohodynnykh-vidklyuchen-hpv-1',
   ),
-  DtekRegion(
+  Oblast(
+    id: 'volyn',
+    name: 'Волинська',
+    company: 'Волиньобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://energy.volyn.ua',
+  ),
+  Oblast(
     id: 'dnipro',
-    name: 'Дніпропетровська область',
-    company: 'ДТЕК Дніпровські електромережі',
-    shutdownsUrl: 'https://www.dtek-dnem.com.ua/ua/shutdowns',
+    name: 'Дніпропетровська',
+    company: 'ДТЕК Дніпровські електромережі / ЦЕК',
+    kind: SourceKind.yasno,
+    yasnoRegion: 3,
+    yasnoDsos: [301, 303],
     mirrorUrl: '$_mirror/dnipro.json',
+    webUrl: 'https://www.dtek-dnem.com.ua/ua/shutdowns',
   ),
-  DtekRegion(
-    id: 'odesa',
-    name: 'Одеська область',
-    company: 'ДТЕК Одеські електромережі',
-    shutdownsUrl: 'https://www.dtek-oem.com.ua/ua/shutdowns',
-    mirrorUrl: '$_mirror/odesa.json',
-  ),
-  DtekRegion(
+  Oblast(
     id: 'donetsk',
-    name: 'Донецька область',
+    name: 'Донецька',
     company: 'ДТЕК Донецькі електромережі',
-    shutdownsUrl: 'https://www.dtek-dem.com.ua/ua/shutdowns',
+    kind: SourceKind.dtek,
+    dtekUrl: 'https://www.dtek-dem.com.ua/ua/shutdowns',
+    webUrl: 'https://www.dtek-dem.com.ua/ua/shutdowns',
+  ),
+  Oblast(
+    id: 'zhytomyr',
+    name: 'Житомирська',
+    company: 'Житомиробленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.ztoe.com.ua',
+  ),
+  Oblast(
+    id: 'zakarpattia',
+    name: 'Закарпатська',
+    company: 'Закарпаттяобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://zakarpat.energy',
+  ),
+  Oblast(
+    id: 'zaporizhzhia',
+    name: 'Запорізька',
+    company: 'Запоріжжяобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.zoe.com.ua',
+  ),
+  Oblast(
+    id: 'ivano-frankivsk',
+    name: 'Івано-Франківська',
+    company: 'Прикарпаттяобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://svitlo.oe.if.ua',
+  ),
+  Oblast(
+    id: 'kyiv-region',
+    name: 'Київська',
+    company: 'ДТЕК Київські регіональні електромережі',
+    kind: SourceKind.dtek,
+    dtekUrl: 'https://www.dtek-krem.com.ua/ua/shutdowns',
+    mirrorUrl: '$_mirror/kyiv-region.json',
+    webUrl: 'https://www.dtek-krem.com.ua/ua/shutdowns',
+  ),
+  Oblast(
+    id: 'kirovohrad',
+    name: 'Кіровоградська',
+    company: 'Кіровоградобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://kiroe.com.ua/energy',
+  ),
+  Oblast(
+    id: 'lviv',
+    name: 'Львівська',
+    company: 'Львівобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://poweron.loe.lviv.ua',
+  ),
+  Oblast(
+    id: 'mykolaiv',
+    name: 'Миколаївська',
+    company: 'Миколаївобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://off.energy.mk.ua',
+  ),
+  Oblast(
+    id: 'odesa',
+    name: 'Одеська',
+    company: 'ДТЕК Одеські електромережі',
+    kind: SourceKind.dtek,
+    dtekUrl: 'https://www.dtek-oem.com.ua/ua/shutdowns',
+    mirrorUrl: '$_mirror/odesa.json',
+    webUrl: 'https://www.dtek-oem.com.ua/ua/shutdowns',
+  ),
+  Oblast(
+    id: 'poltava',
+    name: 'Полтавська',
+    company: 'Полтаваобленерго',
+    kind: SourceKind.web,
+    webUrl:
+        'https://www.poe.pl.ua/disconnection/hrafik-pohodynnoho-vidkliuchennia-elektroenerhii/',
+  ),
+  Oblast(
+    id: 'rivne',
+    name: 'Рівненська',
+    company: 'Рівнеобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.roe.vsei.ua/disconnections',
+  ),
+  Oblast(
+    id: 'sumy',
+    name: 'Сумська',
+    company: 'Сумиобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.soe.com.ua',
+  ),
+  Oblast(
+    id: 'ternopil',
+    name: 'Тернопільська',
+    company: 'Тернопільобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.toe.com.ua',
+  ),
+  Oblast(
+    id: 'kharkiv',
+    name: 'Харківська',
+    company: 'Харківобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.oblenergo.kharkov.ua',
+  ),
+  Oblast(
+    id: 'kherson',
+    name: 'Херсонська',
+    company: 'Херсонобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://ksoe.com.ua/disconnection/search/',
+  ),
+  Oblast(
+    id: 'khmelnytskyi',
+    name: 'Хмельницька',
+    company: 'Хмельницькобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.hoe.com.ua/page/vidkljuchennja',
+  ),
+  Oblast(
+    id: 'cherkasy',
+    name: 'Черкаська',
+    company: 'Черкасиобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://www.cherkasyoblenergo.com/vidkliuchennia?lang=uk',
+  ),
+  Oblast(
+    id: 'chernivtsi',
+    name: 'Чернівецька',
+    company: 'Чернівціобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://oblenergo.cv.ua/shutdowns/',
+  ),
+  Oblast(
+    id: 'chernihiv',
+    name: 'Чернігівська',
+    company: 'Чернігівобленерго',
+    kind: SourceKind.web,
+    webUrl: 'https://chernigivoblenergo.com.ua',
   ),
 ];
 
-/// Області, де мережами керує не DTEK — там графіки публікує місцеве обленерго.
-class OtherOblast {
-  final String name;
-  final String company;
-  final String url;
-  const OtherOblast(this.name, this.company, this.url);
-}
-
-const otherOblasts = <OtherOblast>[
-  OtherOblast('Вінницька', 'Вінницяобленерго', 'https://www.voe.com.ua'),
-  OtherOblast('Волинська', 'Волиньобленерго', 'https://energy.volyn.ua'),
-  OtherOblast('Житомирська', 'Житомиробленерго', 'https://www.ztoe.com.ua'),
-  OtherOblast('Закарпатська', 'Закарпаттяобленерго', 'https://zakarpat.energy'),
-  OtherOblast('Запорізька', 'Запоріжжяобленерго', 'https://www.zoe.com.ua'),
-  OtherOblast('Івано-Франківська', 'Прикарпаттяобленерго', 'https://www.oe.if.ua'),
-  OtherOblast('Кіровоградська', 'Кіровоградобленерго', 'https://kiroe.com.ua'),
-  OtherOblast('Львівська', 'Львівобленерго', 'https://poweron.loe.lviv.ua'),
-  OtherOblast('Миколаївська', 'Миколаївобленерго', 'https://www.energy.mk.ua'),
-  OtherOblast('Полтавська', 'Полтаваобленерго', 'https://www.poe.pl.ua'),
-  OtherOblast('Рівненська', 'Рівнеобленерго', 'https://www.roe.vsei.ua'),
-  OtherOblast('Сумська', 'Сумиобленерго', 'https://www.soe.com.ua'),
-  OtherOblast('Тернопільська', 'Тернопільобленерго', 'https://www.toe.com.ua'),
-  OtherOblast('Харківська', 'Харківобленерго', 'https://www.oblenergo.kharkov.ua'),
-  OtherOblast('Херсонська', 'Херсонобленерго', 'https://ksoe.com.ua'),
-  OtherOblast('Хмельницька', 'Хмельницькобленерго', 'https://www.hoe.com.ua'),
-  OtherOblast('Черкаська', 'Черкасиобленерго', 'https://www.cherkasyoblenergo.com'),
-  OtherOblast('Чернівецька', 'Чернівціобленерго', 'https://oblenergo.cv.ua'),
-  OtherOblast('Чернігівська', 'Чернігівобленерго', 'https://chernigivoblenergo.com.ua'),
-];
+Oblast? oblastById(String? id) => oblasts.where((o) => o.id == id).firstOrNull;

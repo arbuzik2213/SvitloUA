@@ -146,15 +146,15 @@ String queueShort(String key) => key.replaceFirst('GPV', '');
 
 /// Сортування GPV1.1, GPV1.2, GPV2.1 ... GPV10.1 за числами, а не рядком.
 int compareQueues(String a, String b) {
-  List<int> parts(String s) => RegExp(r'\d+')
-      .allMatches(s)
-      .map((m) => int.parse(m.group(0)!))
-      .toList();
+  List<int> parts(String s) =>
+      RegExp(r'\d+').allMatches(s).map((m) => int.parse(m.group(0)!)).toList();
   final pa = parts(a), pb = parts(b);
   for (var i = 0; i < pa.length && i < pb.length; i++) {
     if (pa[i] != pb[i]) return pa[i].compareTo(pb[i]);
   }
-  return pa.length != pb.length ? pa.length.compareTo(pb.length) : a.compareTo(b);
+  return pa.length != pb.length
+      ? pa.length.compareTo(pb.length)
+      : a.compareTo(b);
 }
 
 /// Стан зараз і найближча зміна для вибраної черги.
@@ -182,10 +182,28 @@ String kyivTime(int unix) {
   return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 }
 
-const _weekdays = ['понеділок', 'вівторок', 'середа', 'четвер', 'пʼятниця', 'субота', 'неділя'];
+const _weekdays = [
+  'понеділок',
+  'вівторок',
+  'середа',
+  'четвер',
+  'пʼятниця',
+  'субота',
+  'неділя'
+];
 const _months = [
-  'січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
-  'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня',
+  'січня',
+  'лютого',
+  'березня',
+  'квітня',
+  'травня',
+  'червня',
+  'липня',
+  'серпня',
+  'вересня',
+  'жовтня',
+  'листопада',
+  'грудня',
 ];
 
 /// "12 жовтня, понеділок"

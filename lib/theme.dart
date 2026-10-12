@@ -56,7 +56,7 @@ class Palette extends ThemeExtension<Palette> {
     muted: Color(0xFF8D877C),
     line: Color(0xFF2E2C28),
     light: Color(0xFFF5C02A),
-    dark: Color(0xFF3A3833),
+    dark: Color(0xFF57534B),
     maybe: Color(0xFF6B6455),
     onLight: Color(0xFF12110F),
   );
@@ -97,7 +97,8 @@ extension PaletteX on BuildContext {
 
 /// Змінні шрифти: вагу задаємо і через fontWeight, і через вісь wght,
 /// щоб вона працювала однаково на iOS, Android і в браузері.
-TextStyle display(double size, {FontWeight weight = FontWeight.w600, Color? color, double? height}) =>
+TextStyle display(double size,
+        {FontWeight weight = FontWeight.w600, Color? color, double? height}) =>
     TextStyle(
       fontFamily: 'Unbounded',
       fontSize: size,
@@ -108,7 +109,8 @@ TextStyle display(double size, {FontWeight weight = FontWeight.w600, Color? colo
       letterSpacing: -0.4,
     );
 
-TextStyle body(double size, {FontWeight weight = FontWeight.w400, Color? color, double? height}) =>
+TextStyle body(double size,
+        {FontWeight weight = FontWeight.w400, Color? color, double? height}) =>
     TextStyle(
       fontFamily: 'Golos',
       fontSize: size,
@@ -119,14 +121,16 @@ TextStyle body(double size, {FontWeight weight = FontWeight.w400, Color? color, 
     );
 
 /// Цифри однакової ширини — щоб час у списках стояв рівно.
-TextStyle numbers(double size, {FontWeight weight = FontWeight.w500, Color? color}) =>
+TextStyle numbers(double size,
+        {FontWeight weight = FontWeight.w500, Color? color}) =>
     body(size, weight: weight, color: color).copyWith(
       fontFeatures: const [FontFeature.tabularFigures()],
     );
 
 /// Маленький підпис великими літерами з розрядкою.
-TextStyle label(Color color) => body(11.5, weight: FontWeight.w600, color: color)
-    .copyWith(letterSpacing: 1.2);
+TextStyle label(Color color) =>
+    body(11.5, weight: FontWeight.w600, color: color)
+        .copyWith(letterSpacing: 1.2);
 
 ThemeData buildTheme(Brightness brightness) {
   final p = brightness == Brightness.light ? Palette.day : Palette.night;
